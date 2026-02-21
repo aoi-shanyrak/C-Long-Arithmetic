@@ -73,7 +73,7 @@ C-Long-Arithmetic/
 │   ├── generate-arr.h      # Dynamic array macros
 │   ├── safe-alloc.h        # Safe allocation headers
 │   └── safe-alloc.c        # Safe allocation implementation
-├── test.c                  # Test suite
+├── test.c                  # Tester
 ├── Makefile                # Build system
 └── README.md              
 ```
