@@ -149,6 +149,19 @@ static void superlong_abs_add_uint(const superlong* a, uint32_t b, superlong* re
 }
 
 static void superlong_abs_add(const superlong* a, const superlong* b, superlong* res) {
+  // Handle pointer aliasing
+  if (a == res || b == res) {
+    superlong temp_a, temp_b;
+    superlong_init(&temp_a);
+    superlong_init(&temp_b);
+    superlong_copy(a, &temp_a);
+    superlong_copy(b, &temp_b);
+    superlong_abs_add(&temp_a, &temp_b, res);
+    superlong_deinit(&temp_a);
+    superlong_deinit(&temp_b);
+    return;
+  }
+  
   size_t max_len = (a->digits.len > b->digits.len) ? a->digits.len : b->digits.len;
   superlong_clean(res);
 
@@ -209,6 +222,19 @@ static void superlong_abs_uint_sub(uint32_t b, const superlong* a, superlong* re
 }
 
 static void superlong_abs_sub(const superlong* a, const superlong* b, superlong* res) {
+  // Handle pointer aliasing
+  if (a == res || b == res) {
+    superlong temp_a, temp_b;
+    superlong_init(&temp_a);
+    superlong_init(&temp_b);
+    superlong_copy(a, &temp_a);
+    superlong_copy(b, &temp_b);
+    superlong_abs_sub(&temp_a, &temp_b, res);
+    superlong_deinit(&temp_a);
+    superlong_deinit(&temp_b);
+    return;
+  }
+  
   superlong_clean(res);
 
   int borrow = 0;
@@ -289,6 +315,16 @@ void superlong_add(const superlong* a, const superlong* b, superlong* res) {
 }
 
 void superlong_sub_uint(const superlong* a, uint32_t b, superlong* res) {
+  // Handle case where a == res by using a temporary
+  if (a == res) {
+    superlong temp;
+    superlong_init(&temp);
+    superlong_copy(a, &temp);
+    superlong_sub_uint(&temp, b, res);
+    superlong_deinit(&temp);
+    return;
+  }
+  
   if (a->sign == 0) {
     superlong_from_uint(res, b);
     res->sign = -1;
@@ -331,16 +367,29 @@ void superlong_sub(const superlong* a, const superlong* b, superlong* res) {
 }
 
 void superlong_mul_uint(const superlong* a, uint32_t b, superlong* res) {
-  superlong_clean(res);
-
   if (a->sign == 0 || b == 0) {
+    superlong_clean(res);
     res->sign = 0;
     return;
   }
   if (b == 1) {
-    superlong_copy(a, res);
+    if (a != res)
+      superlong_copy(a, res);
     return;
   }
+  
+  // Handle case where a == res by using a temporary
+  if (a == res) {
+    superlong temp;
+    superlong_init(&temp);
+    superlong_copy(a, &temp);
+    superlong_mul_uint(&temp, b, res);
+    superlong_deinit(&temp);
+    return;
+  }
+  
+  superlong_clean(res);
+  
   if (b == 256) {
     sldigits_add_tail(SLDIGITS_ARR_PTR(res), 0);
     for (size_t i = 0; i < a->digits.len; i++) {
@@ -386,10 +435,12 @@ static void superlong_mul_simple(const superlong* a, const superlong* b, superlo
   superlong_clean(res);
   superlong temp_res;
   superlong_init(&temp_res);
+  superlong_from_uint(&temp_res, 0); // Initialize as zero properly
 
   for (size_t i = 0; i < a->digits.len; i++) {
     superlong temp;
     superlong_init(&temp);
+    superlong_clean(&temp); // Clean to get empty array
 
     for (size_t k = 0; k < i; k++)
       sldigits_add_tail(SLDIGITS_ARR_PTR(&temp), 0);
@@ -402,8 +453,12 @@ static void superlong_mul_simple(const superlong* a, const superlong* b, superlo
       sldigits_add_tail(SLDIGITS_ARR_PTR(&temp), (n256) (product & 0xFF));
       carry = product >> 8;
     }
-    if (carry > 0)
-      sldigits_add_tail(SLDIGITS_ARR_PTR(&temp), (n256) carry);
+    while (carry > 0) {
+      sldigits_add_tail(SLDIGITS_ARR_PTR(&temp), (n256) (carry & 0xFF));
+      carry >>= 8;
+    }
+    
+    temp.sign = 1; // Set sign after adding digits
 
     superlong new_temp_res;
     superlong_init(&new_temp_res);
@@ -541,6 +596,17 @@ void superlong_div_uint(const superlong* a, uint32_t b, superlong* res) {
     perror("Division by zero\n");
     exit(1);
   }
+  
+  // Handle case where a == res by using a temporary
+  if (a == res) {
+    superlong temp;
+    superlong_init(&temp);
+    superlong_copy(a, &temp);
+    superlong_div_uint(&temp, b, res);
+    superlong_deinit(&temp);
+    return;
+  }
+  
   if (a->sign == 0) {
     superlong_clean(res);
     res->sign = 0;
@@ -592,6 +658,21 @@ void superlong_div(const superlong* a, const superlong* b, superlong* res) {
   }
   int sign = (a->sign == b->sign) ? 1 : -1;
 
+  // Optimization: if divisor fits in uint32_t, use div_uint
+  if (b->digits.len <= 4) {
+    uint32_t b_val = 0;
+    for (size_t i = 0; i < b->digits.len; i++) {
+      b_val |= ((uint32_t)sldigits_get(SLDIGITS_ARR_PTR(b), i) << (i * 8));
+    }
+    if (b_val != 0) {
+      superlong_div_uint(a, b_val, res);
+      if (sign < 0 && res->sign != 0) {
+        res->sign = -1;
+      }
+      return;
+    }
+  }
+
   superlong divid, divis;
   superlong_init(&divid);
   superlong_init(&divis);
@@ -612,6 +693,7 @@ void superlong_div(const superlong* a, const superlong* b, superlong* res) {
   superlong quo;
   superlong_init(&remaind);
   superlong_init(&quo);
+  superlong_clean(&quo); // Clean to get empty array for adding digits
   superlong_from_uint(&remaind, 0);
 
   n256* q_digits = nc_malloc(divid.digits.len * sizeof(n256));
@@ -662,12 +744,8 @@ void superlong_div(const superlong* a, const superlong* b, superlong* res) {
 
   free(q_digits);
 
+  quo.sign = sign; // Set sign before normalize
   superlong_normalize(&quo);
-
-  if (superlong_is_zero(&quo))
-    quo.sign = 0;
-  else
-    quo.sign = sign;
 
   superlong_deinit(res);
   *res = quo;

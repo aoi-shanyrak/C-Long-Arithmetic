@@ -1,7 +1,5 @@
 #include "safe-alloc.h"
 
-#include "custom-alloc.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 
